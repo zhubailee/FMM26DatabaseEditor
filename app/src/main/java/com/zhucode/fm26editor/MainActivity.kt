@@ -6,20 +6,32 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-data class DbFile(val name: String, val size: Long)
+private val Ink = Color(0xFF100B20)
+private val Panel = Color(0xFF211638)
+private val Violet = Color(0xFF8B35D8)
+private val Gold = Color(0xFFFFD36A)
+private val Soft = Color(0xFFE8DFF5)
 
+data class DbFile(val name: String, val size: Long)
 data class ScanResult(
     val folder: String,
     val version: String?,
@@ -46,7 +58,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    primary = Violet,
+                    secondary = Gold,
+                    background = Ink,
+                    surface = Panel,
+                    onBackground = Soft,
+                    onSurface = Soft
+                )
+            ) {
                 EditorHome(
                     selectedUri = selectedUri,
                     onChooseFolder = { folderPicker.launch(null) },
@@ -74,24 +95,21 @@ class MainActivity : ComponentActivity() {
             contentResolver.openInputStream(it.uri)?.bufferedReader()?.use { reader -> reader.readText() }
         }.orEmpty()
 
-        // Version is inferred only from known folder/config strings; this is not a binary DB parser.
         val version = Regex("db_archive_(\\d+)", RegexOption.IGNORE_CASE)
             .find(folder.name.orEmpty() + " " + configText)?.groupValues?.getOrNull(1)
 
         val warnings = buildList {
             if (datFiles.isEmpty()) add("Tidak ditemukan file .dat pada folder ini.")
             if (config == null) add("config.xml tidak ditemukan.")
-            if (version != null && version != "2623") {
-                add("Versi terdeteksi $version, sedangkan target aplikasi saat ini 2623.")
+            if (version != null && version != "2603") {
+                add("Versi terdeteksi $version. Aplikasi ini ditargetkan untuk database 2603.")
             }
             if (version == null) add("Versi database belum dapat dipastikan dari nama folder/config.xml.")
         }
-
         ScanResult(folder.name ?: "Database", version, datFiles, config != null, warnings)
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditorHome(
     selectedUri: Uri?,
@@ -103,87 +121,118 @@ private fun EditorHome(
     var error by remember { mutableStateOf<String?>(null) }
     var scanning by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("FMM26 Database Editor") }
-            )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+    Scaffold(containerColor = Ink) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(18.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text("Database tools", style = MaterialTheme.typography.headlineSmall)
-            Text("Fondasi awal aplikasi untuk membuka dan memeriksa folder database FMM26.")
-            Button(
-                onClick = onChooseFolder,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Pilih folder database")
-            }
-
-            selectedUri?.let {
-                Text("Folder telah dipilih. Tekan tombol untuk memindai file.")
-                Button(
-                    enabled = !scanning,
-                    onClick = {
-                        scanning = true
-                        error = null
-                        result = null
-                        scope.launch {
-                            try {
-                                result = onScan(it)
-                            } catch (t: Throwable) {
-                                error = t.message ?: "Gagal membaca folder."
-                            } finally {
-                                scanning = false
-                            }
-                        }
-                    },
+            item {
+                Column(
                     modifier = Modifier.fillMaxWidth()
+                        .background(
+                            Brush.linearGradient(listOf(Color(0xFF492078), Color(0xFF171026), Color(0xFF2B1745))),
+                            RoundedCornerShape(26.dp)
+                        )
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(if (scanning) "Memindai..." else "Pindai database")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("♛", color = Gold, fontSize = 30.sp)
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text("ZHU CODE", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                            Text("FMM26 DATABASE", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Black)
+                            Text("EDITOR", color = Gold, fontSize = 21.sp, fontWeight = FontWeight.Black)
+                        }
+                    }
+                    Text("EDIT  •  MANAGE  •  ENHANCE", color = Soft, fontSize = 11.sp, letterSpacing = 1.5.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Tag("DATABASE 2603")
+                        Tag("ANDROID")
+                        Tag("OFFLINE READY*")
+                    }
                 }
             }
-
-            error?.let {
-                Text("Kesalahan: $it", color = MaterialTheme.colorScheme.error)
+            item {
+                Text("Database workspace", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color.White)
+                Text("Pilih folder database FMM26 Mobile untuk memeriksa struktur file.", color = Soft)
             }
-
-            result?.let { scan ->
-                HorizontalDivider()
-                Text("Hasil pemindaian", style = MaterialTheme.typography.titleLarge)
-                Text("Folder: ${scan.folder}")
-                Text("Versi terdeteksi: ${scan.version ?: "Belum diketahui"}")
-                Text("Jumlah file .dat: ${scan.files.size}")
-                Text("config.xml: ${if (scan.hasConfig) "Ada" else "Tidak ada"}")
-
-                scan.warnings.forEach { warning ->
-                    Text("Peringatan: $warning", color = MaterialTheme.colorScheme.error)
-                }
-
-                Text("Daftar file", style = MaterialTheme.typography.titleMedium)
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    items(scan.files) { file ->
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(10.dp)) {
-                                Text(file.name, style = MaterialTheme.typography.bodyMedium)
-                                Text("${file.size} byte", style = MaterialTheme.typography.bodySmall)
-                            }
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("01  •  SOURCE DATABASE", color = Gold, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                        Text(selectedUri?.lastPathSegment ?: "Belum ada folder yang dipilih", color = Color.White)
+                        Button(
+                            onClick = onChooseFolder,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Violet)
+                        ) { Text("Pilih folder database") }
+                        if (selectedUri != null) {
+                            OutlinedButton(
+                                enabled = !scanning,
+                                onClick = {
+                                    scanning = true
+                                    error = null
+                                    result = null
+                                    scope.launch {
+                                        try { result = onScan(selectedUri) }
+                                        catch (t: Throwable) { error = t.message ?: "Gagal membaca folder." }
+                                        finally { scanning = false }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Gold)
+                            ) { Text(if (scanning) "Memindai..." else "Pindai database") }
                         }
                     }
                 }
             }
-
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Catatan: versi awal ini hanya memindai file. Fitur edit dan simpan .dat akan ditambahkan setelah format database 2623 tervalidasi.",
-                style = MaterialTheme.typography.bodySmall
-            )
+            error?.let { message ->
+                item { Text("Kesalahan: $message", color = Color(0xFFFF8A8A)) }
+            }
+            result?.let { scan ->
+                item {
+                    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("02  •  SCAN REPORT", color = Gold, fontWeight = FontWeight.Bold)
+                            Text(scan.folder, color = Color.White, fontWeight = FontWeight.Bold)
+                            Text("Versi: ${scan.version ?: "Belum diketahui"}")
+                            Text("File DAT: ${scan.files.size}  |  config.xml: ${if (scan.hasConfig) "Ada" else "Tidak ada"}")
+                            scan.warnings.forEach { Text("• $it", color = Color(0xFFFFC477), style = MaterialTheme.typography.bodySmall) }
+                        }
+                    }
+                }
+                item { Text("Database files", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+                items(scan.files) { file ->
+                    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(14.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(file.name, color = Color.White, modifier = Modifier.weight(1f))
+                            Text(formatBytes(file.size), color = Gold, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+            item {
+                Text(
+                    "*Mode offline untuk pemindaian lokal. Saat ini aplikasi baru membaca daftar file dan config.xml; pengeditan serta penulisan file DAT belum tersedia.",
+                    color = Color(0xFFB9AFC8),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun Tag(label: String) {
+    Surface(color = Color(0x553F2361), shape = RoundedCornerShape(50)) {
+        Text(label, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = Gold, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024L * 1024L -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
+    bytes >= 1024L -> String.format("%.1f KB", bytes / 1024.0)
+    else -> "$bytes B"
 }
