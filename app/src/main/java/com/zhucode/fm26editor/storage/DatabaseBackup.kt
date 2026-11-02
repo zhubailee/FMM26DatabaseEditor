@@ -1,7 +1,6 @@
 package com.zhucode.fm26editor.storage
 
 import android.content.ContentResolver
-import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -15,20 +14,9 @@ data class BackupReport(
 
 /**
  * Copies a selected database tree into a user-selected destination tree.
- * The source is read-only from this class; existing destination files are not overwritten.
+ * The source is read-only from this class; existing destination files are never overwritten.
  */
 class DatabaseBackup(private val resolver: ContentResolver) {
-
-    suspend fun createCopy(sourceTree: Uri, destinationTree: Uri): BackupReport =
-        withContext(Dispatchers.IO) {
-            require(sourceTree != destinationTree) {
-                "Folder sumber dan tujuan tidak boleh sama."
-            }
-
-            val source = DocumentFile.fromTreeUri(resolver.contextOrNull(), sourceTree)
-            // DocumentFile.fromTreeUri requires a Context; use the overload below instead.
-            error("Use createCopy(context, sourceTree, destinationTree)")
-        }
 
     suspend fun createCopy(
         sourceRoot: DocumentFile,
@@ -50,8 +38,7 @@ class DatabaseBackup(private val resolver: ContentResolver) {
                 val name = child.name ?: return@forEach
                 val relative = if (prefix.isEmpty()) name else "$prefix/$name"
                 if (child.isDirectory) {
-                    val existing = target.findFile(name)
-                    require(existing == null) {
+                    require(target.findFile(name) == null) {
                         "Folder tujuan sudah memiliki '$relative'. Pilih folder tujuan kosong."
                     }
                     val newDirectory = target.createDirectory(name)
@@ -61,9 +48,11 @@ class DatabaseBackup(private val resolver: ContentResolver) {
                     require(target.findFile(name) == null) {
                         "File tujuan '$relative' sudah ada. Tidak ada file yang ditimpa."
                     }
-                    val mime = child.type ?: "application/octet-stream"
-                    val output = target.createFile(mime, name)
-                        ?: error("Tidak bisa membuat file '$relative'.")
+                    val output = target.createFile(
+                        child.type ?: "application/octet-stream",
+                        name
+                    ) ?: error("Tidak bisa membuat file '$relative'.")
+
                     val digest = MessageDigest.getInstance("SHA-256")
                     var copied = 0L
                     resolver.openInputStream(child.uri).use { input ->
