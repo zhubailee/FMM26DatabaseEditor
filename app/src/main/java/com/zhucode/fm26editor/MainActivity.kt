@@ -37,6 +37,8 @@ data class ScanResult(
     val version: String?,
     val files: List<DbFile>,
     val hasConfig: Boolean,
+    val referencedFiles: List<String>,
+    val missingReferencedFiles: List<String>,
     val warnings: List<String>
 )
 
@@ -83,11 +85,6 @@ class MainActivity : ComponentActivity() {
         require(folder.isDirectory) { "Lokasi yang dipilih bukan folder" }
 
         val children = folder.listFiles()
-        val datFiles = children
-            .filter { it.isFile && it.name?.endsWith(".dat", ignoreCase = true) == true }
-            .map { DbFile(it.name ?: "unknown.dat", it.length()) }
-            .sortedBy { it.name.lowercase() }
-
         val config = children.firstOrNull {
             it.isFile && it.name.equals("config.xml", ignoreCase = true)
         }
@@ -98,15 +95,52 @@ class MainActivity : ComponentActivity() {
         val version = Regex("db_archive_(\\d+)", RegexOption.IGNORE_CASE)
             .find(folder.name.orEmpty() + " " + configText)?.groupValues?.getOrNull(1)
 
+        val referencedPaths = Regex("""from="([^"]+)"\s+to="([^"]+)"""")
+            .findAll(configText)
+            .map { it.groupValues[2].trim('/') }
+            .toList()
+
+        fun findRelative(path: String): DocumentFile? {
+            var current: DocumentFile = folder
+            for (segment in path.split('/').filter { it.isNotBlank() }) {
+                current = current.findFile(segment) ?: return null
+            }
+            return current
+        }
+
+        val missingPaths = referencedPaths.filter { findRelative(it) == null }
+        val datFiles = buildList {
+            fun collect(dir: DocumentFile, prefix: String) {
+                dir.listFiles().forEach { item ->
+                    val name = item.name ?: return@forEach
+                    val relative = if (prefix.isEmpty()) name else "$prefix/$name"
+                    if (item.isDirectory) collect(item, relative)
+                    else if (name.endsWith(".dat", ignoreCase = true)) {
+                        add(DbFile(relative, item.length()))
+                    }
+                }
+            }
+            collect(folder, "")
+        }.sortedBy { it.name.lowercase() }
+
         val warnings = buildList {
             if (datFiles.isEmpty()) add("Tidak ditemukan file .dat pada folder ini.")
             if (config == null) add("config.xml tidak ditemukan.")
+            if (missingPaths.isNotEmpty()) add("File yang dirujuk config.xml belum ditemukan: " + missingPaths.joinToString())
             if (version != null && version != "2603") {
                 add("Versi terdeteksi $version. Aplikasi ini ditargetkan untuk database 2603.")
             }
             if (version == null) add("Versi database belum dapat dipastikan dari nama folder/config.xml.")
         }
-        ScanResult(folder.name ?: "Database", version, datFiles, config != null, warnings)
+        ScanResult(
+            folder.name ?: "Database",
+            version,
+            datFiles,
+            config != null,
+            referencedPaths,
+            missingPaths,
+            warnings
+        )
     }
 }
 
@@ -198,7 +232,8 @@ private fun EditorHome(
                             Text("02  •  SCAN REPORT", color = Gold, fontWeight = FontWeight.Bold)
                             Text(scan.folder, color = Color.White, fontWeight = FontWeight.Bold)
                             Text("Versi: ${scan.version ?: "Belum diketahui"}")
-                            Text("File DAT: ${scan.files.size}  |  config.xml: ${if (scan.hasConfig) "Ada" else "Tidak ada"}")
+                            Text("File DAT ditemukan: ${scan.files.size}  |  config.xml: ${if (scan.hasConfig) "Ada" else "Tidak ada"}")
+                            Text("Referensi DAT di config: ${scan.referencedFiles.size}  |  Belum ditemukan: ${scan.missingReferencedFiles.size}")
                             scan.warnings.forEach { Text("• $it", color = Color(0xFFFFC477), style = MaterialTheme.typography.bodySmall) }
                         }
                     }
