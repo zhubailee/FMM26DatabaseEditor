@@ -220,6 +220,10 @@ private fun EditorHome(
                 Text("Pilih folder database FMM26 Mobile untuk memeriksa struktur file.", color = Soft)
             }
             item {
+                Text("Editor modules", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color.White)
+                EditorWorkspace()
+            }
+            item {
                 Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("01  •  SOURCE DATABASE", color = Gold, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
