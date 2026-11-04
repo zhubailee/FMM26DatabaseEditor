@@ -45,6 +45,8 @@ data class ScanResult(
 class MainActivity : ComponentActivity() {
     private var selectedUri by mutableStateOf<Uri?>(null)
 
+    private var backupDestinationUri by mutableStateOf<Uri?>(null)
+
     private val folderPicker = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -54,6 +56,18 @@ class MainActivity : ComponentActivity() {
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             )
             selectedUri = uri
+        }
+    }
+
+    private val backupFolderPicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            backupDestinationUri = uri
         }
     }
 
@@ -72,7 +86,15 @@ class MainActivity : ComponentActivity() {
             ) {
                 EditorHome(
                     selectedUri = selectedUri,
+                    backupDestinationUri = backupDestinationUri,
                     onChooseFolder = { folderPicker.launch(null) },
+                    onChooseBackupFolder = { backupFolderPicker.launch(null) },
+                    onCreateBackup = { source, destination ->
+                        com.zhucode.fm26editor.storage.DatabaseBackup(contentResolver).createCopy(
+                            DocumentFile.fromTreeUri(this@MainActivity, source) ?: error("Folder sumber tidak bisa dibuka."),
+                            DocumentFile.fromTreeUri(this@MainActivity, destination) ?: error("Folder tujuan tidak bisa dibuka.")
+                        )
+                    },
                     onScan = { uri -> scanDatabase(uri) }
                 )
             }
@@ -147,13 +169,18 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun EditorHome(
     selectedUri: Uri?,
+    backupDestinationUri: Uri?,
     onChooseFolder: () -> Unit,
+    onChooseBackupFolder: () -> Unit,
+    onCreateBackup: suspend (Uri, Uri) -> com.zhucode.fm26editor.storage.BackupReport,
     onScan: suspend (Uri) -> ScanResult
 ) {
     val scope = rememberCoroutineScope()
     var result by remember { mutableStateOf<ScanResult?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var scanning by remember { mutableStateOf(false) }
+    var backingUp by remember { mutableStateOf(false) }
+    var backupMessage by remember { mutableStateOf<String?>(null) }
 
     Scaffold(containerColor = Ink) { padding ->
         LazyColumn(
@@ -222,6 +249,42 @@ private fun EditorHome(
                     }
                 }
             }
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("02  •  BACKUP DATABASE", color = Gold, fontWeight = FontWeight.Bold)
+                        Text("Salin seluruh folder database ke folder lain tanpa mengubah sumber.", color = Soft)
+                        Text(backupDestinationUri?.lastPathSegment ?: "Folder tujuan belum dipilih", color = Color.White)
+                        OutlinedButton(onClick = onChooseBackupFolder, modifier = Modifier.fillMaxWidth()) {
+                            Text("Pilih folder tujuan backup")
+                        }
+                        Button(
+                            enabled = selectedUri != null && backupDestinationUri != null && !backingUp,
+                            onClick = {
+                                val source = selectedUri
+                                val destination = backupDestinationUri
+                                if (source != null && destination != null) {
+                                    backingUp = true
+                                    backupMessage = null
+                                    scope.launch {
+                                        try {
+                                            val report = onCreateBackup(source, destination)
+                                            backupMessage = "Backup selesai: " + report.copiedFiles + " file, " + formatBytes(report.copiedBytes)
+                                        } catch (t: Throwable) {
+                                            backupMessage = "Backup gagal: " + (t.message ?: "Kesalahan tidak diketahui")
+                                        } finally {
+                                            backingUp = false
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Violet)
+                        ) { Text(if (backingUp) "Membuat backup..." else "Buat backup sekarang") }
+                        backupMessage?.let { Text(it, color = Gold, style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
+            }
             error?.let { message ->
                 item { Text("Kesalahan: $message", color = Color(0xFFFF8A8A)) }
             }
@@ -229,7 +292,7 @@ private fun EditorHome(
                 item {
                     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
                         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("02  •  SCAN REPORT", color = Gold, fontWeight = FontWeight.Bold)
+                            Text("03  •  SCAN REPORT", color = Gold, fontWeight = FontWeight.Bold)
                             Text(scan.folder, color = Color.White, fontWeight = FontWeight.Bold)
                             Text("Versi: ${scan.version ?: "Belum diketahui"}")
                             Text("File DAT ditemukan: ${scan.files.size}  |  config.xml: ${if (scan.hasConfig) "Ada" else "Tidak ada"}")
