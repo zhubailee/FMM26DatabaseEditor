@@ -32,6 +32,15 @@ private val Gold = Color(0xFFFFD36A)
 private val Soft = Color(0xFFE8DFF5)
 
 data class DbFile(val name: String, val size: Long)
+data class FileReadResult(
+    val name: String,
+    val size: Long,
+    val hexPreview: String,
+    val textPreview: String?,
+    val playerRows: List<PlayerPreview>,
+    val parserMessage: String?
+)
+data class PlayerPreview(val index: Int, val id: Int, val uid: Int, val ca: Int, val pa: Int, val pace: Int, val finishing: Int, val passing: Int)
 data class ScanResult(
     val folder: String,
     val version: String?,
@@ -95,10 +104,46 @@ class MainActivity : ComponentActivity() {
                             DocumentFile.fromTreeUri(this@MainActivity, destination) ?: error("Folder tujuan tidak bisa dibuka.")
                         )
                     },
-                    onScan = { uri -> scanDatabase(uri) }
+                    onScan = { uri -> scanDatabase(uri) },
+                    onReadFile = { root, relative -> readDatabaseFile(root, relative) }
                 )
             }
         }
+    }
+
+    private suspend fun readDatabaseFile(rootUri: Uri, relativePath: String): FileReadResult = withContext(Dispatchers.IO) {
+        val root = DocumentFile.fromTreeUri(this@MainActivity, rootUri) ?: error("Folder database tidak dapat dibuka.")
+        var file: DocumentFile = root
+        relativePath.split('/').filter { it.isNotBlank() }.forEach { segment ->
+            file = file.findFile(segment) ?: error("File tidak ditemukan: $relativePath")
+        }
+        require(file.isFile) { "Item yang dipilih bukan file." }
+        val size = file.length()
+        require(size <= 64L * 1024L * 1024L) { "File terlalu besar untuk preview aman (maksimum 64 MB)." }
+        val bytes = contentResolver.openInputStream(file.uri)?.use { it.readBytes() }
+            ?: error("File tidak dapat dibaca.")
+        val hex = bytes.take(256).chunked(16).mapIndexed { row, chunk ->
+            "%08X  ".format(row * 16) + chunk.joinToString(" ") { "%02X".format(it.toInt() and 0xFF) }
+        }.joinToString("\\n")
+        val looksText = bytes.take(4096).none { b ->
+            val v = b.toInt() and 0xFF
+            v == 0 || (v < 0x09) || (v in 0x0E..0x1F)
+        }
+        val textPreview = if (looksText) bytes.take(8192).toByteArray().toString(Charsets.UTF_8) else null
+        var rows = emptyList<PlayerPreview>()
+        var parserMessage: String? = null
+        if (file.name.equals("player.dat", true) || file.name.equals("players.dat", true)) {
+            try {
+                val db = com.zhucode.fm26editor.binary.PlayerDatabase.parse(bytes)
+                rows = db.players.take(300).mapIndexed { index, p ->
+                    PlayerPreview(index, p.id, p.uid, p.ca, p.pa, p.attributes.getOrElse(10) { 0 }, p.attributes.getOrElse(3) { 0 }, p.attributes.getOrElse(7) { 0 })
+                }
+                parserMessage = "Player DAT terbaca: ${db.players.size} record. Preview dibatasi 300 pemain."
+            } catch (t: Throwable) {
+                parserMessage = "Player DAT belum cocok dengan skema parser: ${t.message}"
+            }
+        }
+        FileReadResult(file.name ?: relativePath, size, hex, textPreview, rows, parserMessage)
     }
 
     private suspend fun scanDatabase(uri: Uri): ScanResult = withContext(Dispatchers.IO) {
@@ -173,7 +218,8 @@ private fun EditorHome(
     onChooseFolder: () -> Unit,
     onChooseBackupFolder: () -> Unit,
     onCreateBackup: suspend (Uri, Uri) -> com.zhucode.fm26editor.storage.BackupReport,
-    onScan: suspend (Uri) -> ScanResult
+    onScan: suspend (Uri) -> ScanResult,
+    onReadFile: suspend (Uri, String) -> FileReadResult
 ) {
     val scope = rememberCoroutineScope()
     var result by remember { mutableStateOf<ScanResult?>(null) }
@@ -181,6 +227,9 @@ private fun EditorHome(
     var scanning by remember { mutableStateOf(false) }
     var backingUp by remember { mutableStateOf(false) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
+    var readingFile by remember { mutableStateOf(false) }
+    var fileReadResult by remember { mutableStateOf<FileReadResult?>(null) }
+    var fileReadError by remember { mutableStateOf<String?>(null) }
 
     Scaffold(containerColor = Ink) { padding ->
         LazyColumn(
@@ -308,9 +357,56 @@ private fun EditorHome(
                 item { Text("Database files", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
                 items(scan.files) { file ->
                     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(14.dp)) {
-                        Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(file.name, color = Color.White, modifier = Modifier.weight(1f))
-                            Text(formatBytes(file.size), color = Gold, style = MaterialTheme.typography.bodySmall)
+                        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(file.name, color = Color.White, modifier = Modifier.weight(1f))
+                                Text(formatBytes(file.size), color = Gold, style = MaterialTheme.typography.bodySmall)
+                            }
+                            OutlinedButton(
+                                enabled = !readingFile,
+                                onClick = {
+                                    val root = selectedUri
+                                    if (root != null) {
+                                        readingFile = true
+                                        fileReadError = null
+                                        fileReadResult = null
+                                        scope.launch {
+                                            try { fileReadResult = onReadFile(root, file.name) }
+                                            catch (t: Throwable) { fileReadError = t.message ?: "Gagal membaca file." }
+                                            finally { readingFile = false }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Gold)
+                            ) { Text(if (readingFile) "Membaca file..." else "Baca isi file") }
+                        }
+                    }
+                }
+                fileReadError?.let { message ->
+                    item { Text("Gagal membaca: $message", color = Color(0xFFFF8A8A)) }
+                }
+                fileReadResult?.let { data ->
+                    item {
+                        Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("FILE CONTENT VIEWER", color = Gold, fontWeight = FontWeight.Bold)
+                                Text(data.name, color = Color.White, fontWeight = FontWeight.Bold)
+                                Text("Ukuran: ${formatBytes(data.size)}")
+                                data.parserMessage?.let { Text(it, color = Gold, style = MaterialTheme.typography.bodySmall) }
+                                if (data.playerRows.isNotEmpty()) {
+                                    Text("PREVIEW PEMAIN (maks. 300)", color = Gold, fontWeight = FontWeight.Bold)
+                                    data.playerRows.forEach { p ->
+                                        Text("#${p.index}  ID ${p.id}  UID ${p.uid}  CA ${p.ca}  PA ${p.pa}  PAC ${p.pace}  FIN ${p.finishing}  PAS ${p.passing}", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                                data.textPreview?.let {
+                                    Text("TEKS", color = Gold, fontWeight = FontWeight.Bold)
+                                    Text(it, color = Soft, style = MaterialTheme.typography.bodySmall)
+                                }
+                                Text("HEX PREVIEW (256 byte pertama)", color = Gold, fontWeight = FontWeight.Bold)
+                                Text(data.hexPreview.ifBlank { "File kosong." }, color = Soft, style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 }
